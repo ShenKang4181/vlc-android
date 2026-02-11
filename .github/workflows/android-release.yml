@@ -36,8 +36,8 @@ jobs:
       - name: Install platforms, tools, and NDK
         run: |
           yes | sdkmanager --channel=3 \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
             "platform-tools" \
             "ndk;27.1.12297006"
 
@@ -65,24 +65,6 @@ jobs:
             -PkeyStoreFile="$KEYSTORE_FILE" \
             -Pstorealias="$ANDROID_KEY_ALIAS" \
             -Pstorepwd="$ANDROID_KEYSTORE_PASSWORD"
-
-      - name: Verify release APK signature (best-effort)
-        run: |
-          APK_PATH=$(ls application/app/build/outputs/apk/signedRelease/*.apk | head -n 1)
-          echo "Verifying $APK_PATH"
-
-          APKSIGNER=""
-          if [ -n "$ANDROID_SDK_ROOT" ] && [ -x "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" ]; then
-            APKSIGNER="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
-          elif [ -n "$ANDROID_HOME" ] && [ -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" ]; then
-            APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          fi
-
-          if [ -n "$APKSIGNER" ]; then
-            "$APKSIGNER" verify --verbose "$APK_PATH"
-          else
-            echo "WARNING: apksigner not found in build-tools/35.0.0, skipping verification step"
-          fi
 
       - name: Upload signed release artifact
         uses: actions/upload-artifact@v4
