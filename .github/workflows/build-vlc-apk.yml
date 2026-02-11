@@ -9,10 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # SDK默认安装路径（无需手动指定，避免权限问题）
-      ANDROID_SDK_ROOT: ${{ runner.home }}/.android/sdk
-      ANDROID_NDK_VERSION: 25.2.9519653  # VLC兼容的NDK版本（r25c）
-      VLC_ARCH: arm64-v8a  # 仅编译arm64架构
+      # 核心修复：用固定路径替代无效的runner.home变量
+      ANDROID_SDK_ROOT: /home/runner/.android/sdk
+      ANDROID_NDK_VERSION: 25.2.9519653  # VLC兼容的NDK r25c
+      VLC_ARCH: arm64-v8a  # 仅编译主流arm64架构
 
     steps:
       - name: Checkout code
@@ -21,27 +21,25 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 步骤1：安装系统依赖（不变）
+      # 步骤1：安装系统依赖
       - name: Install system dependencies
         run: |
           sudo apt update && sudo apt install -y \
             autoconf automake build-essential cmake curl git \
             libtool pkg-config python3 python3-pip unzip wget yasm zip zlib1g-dev
 
-      # 步骤2：先安装JDK 17（用于运行sdkmanager）
+      # 步骤2：安装JDK 17（用于运行sdkmanager）
       - name: Set up JDK 17 (for sdkmanager)
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 步骤3：配置Android SDK（移除无效参数，指定兼容JDK11的cmdline-tools）
-      - name: Set up Android SDK (兼容JDK11)
+      # 步骤3：配置Android SDK（无无效参数，指定兼容的cmdline-tools）
+      - name: Set up Android SDK (compatible with JDK11)
         uses: android-actions/setup-android@v3
         with:
-          # 核心修改：指定cmdline-tools版本为11.0（支持JDK11，避免JDK17强制要求）
-          cmdline-tools-version: 11.0
-          # 指定需要的SDK组件（替代原无效参数）
+          cmdline-tools-version: 11.0  # 兼容JDK11，避免强制JDK17
           packages: |
             tools
             platform-tools
@@ -49,17 +47,17 @@ jobs:
             build-tools;33.0.2
           accept-android-sdk-licenses: true
 
-      # 步骤4：手动安装NDK（适配默认SDK路径）
+      # 步骤4：手动安装NDK（适配固定SDK路径）
       - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
         run: |
-          # 安装NDK到默认SDK目录
+          # 安装NDK到固定SDK目录
           yes | $ANDROID_SDK_ROOT/cmdline-tools/11.0/bin/sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
           # 配置NDK路径环境变量
           export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}
           echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_NDK=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
           # 创建软链接（兼容VLC编译脚本）
-          ln -s $ANDROID_NDK_ROOT $HOME/android-ndk
+          ln -s $ANDROID_NDK_ROOT /home/runner/android-ndk
           echo "ANDROID_NDK=/home/runner/android-ndk" >> $GITHUB_ENV
 
       # 步骤5：切回JDK 11（VLC编译必须用JDK11）
@@ -70,17 +68,16 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # 步骤6：增加8GB交换内存（避免编译内存不足）
+      # 步骤6：增加8GB交换内存（避免编译OOM）
       - name: Add 8GB swap memory
         run: |
           sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          # 验证交换内存是否生效
-          swapon --show
+          swapon --show  # 验证交换内存生效
 
-      # 步骤7：编译VLC APK（指定NDK路径，避免脚本找不到）
+      # 步骤7：编译VLC APK（指定NDK路径）
       - name: Build VLC APK
         run: |
           cd $GITHUB_WORKSPACE
