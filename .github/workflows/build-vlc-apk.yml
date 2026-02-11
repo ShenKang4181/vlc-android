@@ -1,32 +1,25 @@
-# 工作流名称
 name: Build VLC for Android APK
 
-# 触发条件：push到main分支、手动触发
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 手动触发开关
+  workflow_dispatch:
 
-# 作业配置
 jobs:
   build:
-    # 使用Ubuntu最新版runner
     runs-on: ubuntu-latest
-    # 增大runner内存（VLC编译耗内存）
     env:
       ANDROID_SDK_ROOT: /usr/local/android-sdk
-      ANDROID_NDK_ROOT: /usr/local/android-sdk/ndk/25.2.9519653
-      VLC_ARCH: arm64-v8a  # 编译arm64-v8a架构（主流安卓设备）
+      # 注意：新版setup-android会自动设置NDK路径，无需硬编码
+      VLC_ARCH: arm64-v8a
 
     steps:
-      # 步骤1：检出代码（包含submodule，VLC依赖子模块）
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # 拉取所有子模块
-          fetch-depth: 0         # 拉取完整提交历史
+          submodules: recursive
+          fetch-depth: 0
 
-      # 步骤2：安装系统依赖（VLC编译必需的工具）
       - name: Install system dependencies
         run: |
           sudo apt update && sudo apt install -y \
@@ -45,8 +38,12 @@ jobs:
             yasm \
             zip \
             zlib1g-dev
+          # 新增：临时扩容交换内存，避免编译内存不足
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
 
-      # 步骤3：配置Java环境（VLC安卓版需要JDK 11）
       - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
@@ -54,46 +51,49 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # 步骤4：安装Android SDK/NDK（VLC编译核心依赖）
+      # ========== 关键修改：修正setup-android的参数格式 ==========
       - name: Set up Android SDK/NDK
         uses: android-actions/setup-android@v3
         with:
-          # 指定SDK版本（匹配VLC安卓版要求）
-          api-levels: 33
-          # 指定NDK版本（VLC推荐r25c）
-          ndk-version: 25.2.9519653
-          # 安装构建工具
-          build-tools: 33.0.2
-          # 自动接受SDK许可
+          # 必选：指定cmdline-tools版本（推荐latest）
+          cmdline-tools-version: 'latest'
+          # 核心修改：通过packages声明所有需要的Android组件
+          packages: |
+            platforms;android-33          # API 33（VLC要求）
+            build-tools;33.0.2            # Build-Tools版本
+            ndk;25.2.9519653              # NDK r25c（VLC兼容版本）
+          # 自动接受SDK许可（保留）
           accept-android-sdk-licenses: true
 
-      # 步骤5：修复NDK路径（VLC编译脚本需要明确的NDK路径）
-      - name: Fix NDK path
+      # ========== 关键修改：重新获取NDK实际路径 ==========
+      - name: Get NDK path and configure env
         run: |
-          # 创建NDK软链接，匹配VLC编译脚本的路径预期
-          sudo ln -s $ANDROID_NDK_ROOT /usr/local/android-ndk
+          # 查找安装的NDK实际路径（新版setup-android会把NDK放在sdk/ndk/版本号目录）
+          NDK_PATH=$(find $ANDROID_SDK_ROOT/ndk -maxdepth 1 -type d | grep -E '25.2.9519653' | head -1)
+          # 输出路径用于验证
+          echo "NDK实际路径: $NDK_PATH"
+          # 设置环境变量，供VLC编译脚本使用
+          echo "ANDROID_NDK=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          # 创建软链接（兼容VLC编译脚本的路径预期）
+          sudo ln -s $NDK_PATH /usr/local/android-ndk
           echo "ANDROID_NDK=/usr/local/android-ndk" >> $GITHUB_ENV
 
-      # 步骤6：编译VLC安卓版APK（仅编译arm64-v8a架构）
       - name: Build VLC APK
         run: |
-          # 进入源码目录
           cd $GITHUB_WORKSPACE
-          # 赋予编译脚本执行权限
           chmod +x compile.sh
-          # 编译arm64-v8a架构（耗时约1-2小时）
-          # 如需编译其他架构：armeabi-v7a/x86/x86_64，替换参数即可
+          # 编译前输出环境变量，便于调试
+          echo "ANDROID_NDK: $ANDROID_NDK"
+          echo "VLC_ARCH: $VLC_ARCH"
+          # 执行编译
           ./compile.sh -a $VLC_ARCH
 
-      # 步骤7：上传APK作为构建产物（方便下载）
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          # 产物名称
           name: vlc-android-${{ env.VLC_ARCH }}-apk
-          # APK所在路径（VLC编译完成后输出到bin目录）
           path: |
             $GITHUB_WORKSPACE/bin/*/*.apk
             $GITHUB_WORKSPACE/bin/*/*.apks
-          # 产物保留90天
           retention-days: 90
