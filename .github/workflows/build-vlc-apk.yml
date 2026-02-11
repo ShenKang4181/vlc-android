@@ -1,98 +1,116 @@
-name: Build VLC for Android APK
+name: Build VLC Android APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # 手动触发
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # runner用户主目录固定路径
-      ANDROID_SDK_ROOT: /home/runner/.android/sdk
-      ANDROID_NDK_VERSION: 25.2.9519653  # VLC兼容的NDK r25c
-      VLC_ARCH: arm64-v8a  # 仅编译arm64架构
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 步骤1：安装系统依赖
-      - name: Install system dependencies
-        run: |
-          sudo apt update && sudo apt install -y \
-            autoconf automake build-essential cmake curl git \
-            libtool pkg-config python3 python3-pip unzip wget yasm zip zlib1g-dev
-
-      # 步骤2：安装JDK 17（用于运行sdkmanager）
-      - name: Set up JDK 17 (for sdkmanager)
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 步骤3：配置Android SDK（使用正确的cmdline-tools构建号）
-      - name: Set up Android SDK (correct cmdline-tools version)
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        uses: nttld/setup-ndk@v1
         with:
-          # 核心修复：11.0版本对应的正确构建号是8512546（避免404）
-          cmdline-tools-version: 8512546
-          # 指定需要的SDK组件
-          packages: |
-            tools
-            platform-tools
-            android-33
-            build-tools;33.0.2
-          accept-android-sdk-licenses: true
+          ndk-version: r25c
+          add-to-path: true
 
-      # 步骤4：手动安装NDK（适配固定SDK路径）
-      - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
-        run: |
-          # 安装NDK到固定SDK目录
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
-          # 配置NDK路径环境变量
-          export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
-          # 创建软链接（兼容VLC编译脚本）
-          ln -s $ANDROID_NDK_ROOT /home/runner/android-ndk
-          echo "ANDROID_NDK=/home/runner/android-ndk" >> $GITHUB_ENV
-
-      # 步骤5：切回JDK 11（VLC编译必须用JDK11）
-      - name: Switch back to JDK 11 (for VLC build)
-        uses: actions/setup-java@v4
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
         with:
-          java-version: '11'
-          distribution: 'temurin'
-          cache: gradle
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-      # 步骤6：增加8GB交换内存（避免编译OOM）
-      - name: Add 8GB swap memory
+      - name: Install dependencies
         run: |
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          swapon --show  # 验证交换内存生效
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            autopoint \
+            cmake \
+            build-essential \
+            libtool \
+            patch \
+            pkg-config \
+            protobuf-compiler \
+            ragel \
+            subversion \
+            unzip \
+            git \
+            wget
 
-      # 步骤7：编译VLC APK（指定NDK路径）
-      - name: Build VLC APK
+      - name: Setup environment
         run: |
-          cd $GITHUB_WORKSPACE
-          chmod +x compile.sh
-          # 编译arm64-v8a，强制指定NDK路径
-          ./compile.sh -a $VLC_ARCH --ndk-path $ANDROID_NDK_ROOT
+          echo "ANDROID_SDK=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
-      # 步骤8：上传APK产物
-      - name: Upload APK artifact
+      - name: Build native libraries
+        run: |
+          ./buildsystem/compile.sh -a armeabi-v7a
+        env:
+          ANDROID_SDK: ${{ env.ANDROID_SDK }}
+          ANDROID_NDK: ${{ env.ANDROID_NDK }}
+        timeout-minutes: 120
+
+      - name: Build APK (Debug)
+        if: github.event.inputs.build_type != 'release'
+        run: |
+          ./gradlew assembleDebug
+        env:
+          ANDROID_SDK: ${{ env.ANDROID_SDK }}
+
+      - name: Build APK (Release)
+        if: github.event.inputs.build_type == 'release'
+        run: |
+          ./gradlew assembleRelease
+        env:
+          ANDROID_SDK: ${{ env.ANDROID_SDK }}
+
+      - name: Upload Debug APK
+        if: github.event.inputs.build_type != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: vlc-android-${{ env.VLC_ARCH }}-apk
+          name: vlc-android-debug
           path: |
-            $GITHUB_WORKSPACE/bin/*/*.apk
-            $GITHUB_WORKSPACE/bin/*/*.apks
-          retention-days: 90
+            application/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - name: Upload Release APK
+        if: github.event.inputs.build_type == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlc-android-release
+          path: |
+            application/app/build/outputs/apk/release/*.apk
+          retention-days: 30
