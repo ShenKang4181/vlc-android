@@ -35,10 +35,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK
+      - name: Install NDK r21e
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r25c
+          ndk-version: r21e
           add-to-path: true
 
       - name: Cache Gradle dependencies
@@ -74,7 +74,6 @@ jobs:
         run: |
           echo "ANDROID_SDK=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_NDK=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-          # 配置 Git 身份，用于应用 VLC 补丁
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
 
