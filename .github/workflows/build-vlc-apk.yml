@@ -1,122 +1,41 @@
 name: Build VLC Android APK
 
 on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
-  workflow_dispatch:
+  workflow_dispatch:  # 仅手动触发
     inputs:
       build_type:
         description: 'Build type'
         required: true
-        default: 'debug'
+        default: 'release'
         type: choice
         options:
-          - debug
-          - release
+        - debug
+        - release
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: android-opensdk:latest  # 你需要构建或找到合适的 Docker 镜像
+      
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK r21e
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r21e
-          add-to-path: true
-
-      - name: Cache Gradle dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            autoconf \
-            automake \
-            autopoint \
-            cmake \
-            build-essential \
-            libtool \
-            patch \
-            pkg-config \
-            protobuf-compiler \
-            ragel \
-            subversion \
-            unzip \
-            git \
-            wget
-
-      - name: Setup environment
-        run: |
-          echo "ANDROID_SDK=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
-
-      - name: Build native libraries
-        run: |
-          ./buildsystem/compile.sh -a armeabi-v7a
-        env:
-          ANDROID_SDK: ${{ env.ANDROID_SDK }}
-          ANDROID_NDK: ${{ env.ANDROID_NDK }}
-          GIT_COMMITTER_NAME: GitHub Actions
-          GIT_COMMITTER_EMAIL: github-actions@github.com
-          GIT_AUTHOR_NAME: GitHub Actions
-          GIT_AUTHOR_EMAIL: github-actions@github.com
-        timeout-minutes: 120
-
-      - name: Build APK (Debug)
-        if: github.event.inputs.build_type != 'release'
-        run: |
-          ./gradlew assembleDebug
-        env:
-          ANDROID_SDK: ${{ env.ANDROID_SDK }}
-
-      - name: Build APK (Release)
-        if: github.event.inputs.build_type == 'release'
-        run: |
-          ./gradlew assembleRelease
-        env:
-          ANDROID_SDK: ${{ env.ANDROID_SDK }}
-
-      - name: Upload Debug APK
-        if: github.event.inputs.build_type != 'release'
-        uses: actions/upload-artifact@v4
-        with:
-          name: vlc-android-debug
-          path: |
-            application/app/build/outputs/apk/debug/*.apk
-          retention-days: 7
-
-      - name: Upload Release APK
-        if: github.event.inputs.build_type == 'release'
-        uses: actions/upload-artifact@v4
-        with:
-          name: vlc-android-release
-          path: |
-            application/app/build/outputs/apk/release/*.apk
-          retention-days: 30
+    - name: Clone VLC Android
+      run: |
+        git clone --recursive https://github.com/videolan/vlc-android.git
+        cd vlc-android
+        
+    - name: Build APK
+      working-directory: /vlc-android
+      run: |
+        # 配置环境
+        export ANDROID_SDK_ROOT=/opt/android-sdk
+        export ANDROID_NDK_ROOT=/opt/android-ndk
+        
+        # 运行构建
+        ./compile.sh
+        
+    - name: Store APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: VLC-Android-APK
+        path: vlc-android/build/outputs/apk/
