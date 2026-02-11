@@ -3,15 +3,16 @@ name: Build VLC for Android APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      ANDROID_SDK_ROOT: /usr/local/android-sdk
-      # 注意：新版setup-android会自动设置NDK路径，无需硬编码
-      VLC_ARCH: arm64-v8a
+      # 核心修改：将SDK路径改为用户目录（避免权限问题）
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+      ANDROID_NDK_VERSION: 25.2.9519653  # VLC兼容的NDK版本
+      VLC_ARCH: arm64-v8a  # 仅编译主流arm64架构
 
     steps:
       - name: Checkout code
@@ -20,30 +21,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # 步骤1：安装系统依赖（不变）
       - name: Install system dependencies
         run: |
           sudo apt update && sudo apt install -y \
-            autoconf \
-            automake \
-            build-essential \
-            cmake \
-            curl \
-            git \
-            libtool \
-            pkg-config \
-            python3 \
-            python3-pip \
-            unzip \
-            wget \
-            yasm \
-            zip \
-            zlib1g-dev
-          # 新增：临时扩容交换内存，避免编译内存不足
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+            autoconf automake build-essential cmake curl git \
+            libtool pkg-config python3 python3-pip unzip wget yasm zip zlib1g-dev
 
+      # 步骤2：配置JDK 11（不变）
       - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
@@ -51,44 +36,50 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ========== 关键修改：修正setup-android的参数格式 ==========
-      - name: Set up Android SDK/NDK
+      # 步骤3：修复setup-android参数 + 权限问题
+      - name: Set up Android SDK (修正参数)
         uses: android-actions/setup-android@v3
         with:
-          # 必选：指定cmdline-tools版本（推荐latest）
-          cmdline-tools-version: 'latest'
-          # 核心修改：通过packages声明所有需要的Android组件
+          # 核心修改：通过packages指定需要的SDK组件（替代原无效参数）
           packages: |
-            platforms;android-33          # API 33（VLC要求）
-            build-tools;33.0.2            # Build-Tools版本
-            ndk;25.2.9519653              # NDK r25c（VLC兼容版本）
-          # 自动接受SDK许可（保留）
+            tools
+            platform-tools
+            android-33
+            build-tools;33.0.2
           accept-android-sdk-licenses: true
+          # 核心修改：指定SDK安装到用户目录
+          android-sdk-root: ${{ env.ANDROID_SDK_ROOT }}
 
-      # ========== 关键修改：重新获取NDK实际路径 ==========
-      - name: Get NDK path and configure env
+      # 步骤4：手动安装NDK（setup-android v3不再直接支持NDK参数）
+      - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
         run: |
-          # 查找安装的NDK实际路径（新版setup-android会把NDK放在sdk/ndk/版本号目录）
-          NDK_PATH=$(find $ANDROID_SDK_ROOT/ndk -maxdepth 1 -type d | grep -E '25.2.9519653' | head -1)
-          # 输出路径用于验证
-          echo "NDK实际路径: $NDK_PATH"
-          # 设置环境变量，供VLC编译脚本使用
-          echo "ANDROID_NDK=$NDK_PATH" >> $GITHUB_ENV
-          echo "NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          # 安装NDK到SDK目录下
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
+          # 配置NDK路径环境变量
+          export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
           # 创建软链接（兼容VLC编译脚本的路径预期）
-          sudo ln -s $NDK_PATH /usr/local/android-ndk
-          echo "ANDROID_NDK=/usr/local/android-ndk" >> $GITHUB_ENV
+          ln -s $ANDROID_NDK_ROOT $HOME/android-ndk
+          echo "ANDROID_NDK=/home/runner/android-ndk" >> $GITHUB_ENV
 
+      # 步骤5：增加交换内存（避免编译时内存不足）
+      - name: Add swap memory
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
+      # 步骤6：编译VLC APK（修正权限，去掉sudo）
       - name: Build VLC APK
         run: |
           cd $GITHUB_WORKSPACE
           chmod +x compile.sh
-          # 编译前输出环境变量，便于调试
-          echo "ANDROID_NDK: $ANDROID_NDK"
-          echo "VLC_ARCH: $VLC_ARCH"
-          # 执行编译
-          ./compile.sh -a $VLC_ARCH
+          # 编译时指定NDK路径，避免脚本找不到
+          ./compile.sh -a $VLC_ARCH --ndk-path $ANDROID_NDK_ROOT
 
+      # 步骤7：上传APK产物（不变）
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
