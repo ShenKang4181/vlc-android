@@ -74,6 +74,9 @@ jobs:
         run: |
           echo "ANDROID_SDK=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_NDK=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          # 配置 Git 身份，用于应用 VLC 补丁
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
 
       - name: Build native libraries
         run: |
@@ -81,6 +84,10 @@ jobs:
         env:
           ANDROID_SDK: ${{ env.ANDROID_SDK }}
           ANDROID_NDK: ${{ env.ANDROID_NDK }}
+          GIT_COMMITTER_NAME: GitHub Actions
+          GIT_COMMITTER_EMAIL: github-actions@github.com
+          GIT_AUTHOR_NAME: GitHub Actions
+          GIT_AUTHOR_EMAIL: github-actions@github.com
         timeout-minutes: 120
 
       - name: Build APK (Debug)
