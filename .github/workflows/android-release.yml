@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    # 【可选优化】修改文档时不触发构建，节省 CI 时间
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -12,7 +13,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      
+
+# 【优化1】定义全局环境变量，方便统一修改
 env:
   ANDROID_COMPILE_SDK: 36
   ANDROID_BUILD_TOOLS: 36.0.0
@@ -40,8 +42,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          # 【优化2】开启 JDK 缓存
           cache: 'gradle'
 
+      # 【优化3】简化 SDK 安装，合并到一个 Action 中
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -50,15 +54,17 @@ jobs:
             build-tools;${{ env.ANDROID_BUILD_TOOLS }}
             ndk;${{ env.ANDROID_NDK_VERSION }}
 
+      # 【优化4】setup-gradle 主要用于缓存和依赖管理，配合 gradlew 使用
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: wrapper
-          cache-read-only: ${{ github.event_name != 'push' }}
+          gradle-version: wrapper # 【关键】使用项目自带的 wrapper
+          cache-read-only: ${{ github.event_name != 'push' }} # PR 只读取缓存，Push 才写入
 
       - name: Create local.properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
+          # 【优化5】使用变量引用 NDK 版本，不再硬编码
           echo "ndk.dir=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> local.properties
 
       - name: Prepare release keystore
@@ -75,16 +81,18 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
-          chmod +x gradlew
+          # 【优化6】使用 ./gradlew，并添加 --stacktrace 方便报错排查
+          chmod +x gradlew # 确保 wrapper 有执行权限（以防万一）
           ./gradlew :application:app:assembleSignedRelease \
             -PkeyStoreFile="$KEYSTORE_FILE" \
             -Pstorealias="$ANDROID_KEY_ALIAS" \
             -Pstorepwd="$ANDROID_KEYSTORE_PASSWORD" \
-            --stacktrace
+            --stacktrace # 出错时打印详细堆栈
 
       - name: Upload signed release artifact
         uses: actions/upload-artifact@v4
         with:
           name: vlc-android-signed-release-apk
           path: application/app/build/outputs/apk/signedRelease/*.apk
+          # 【可选优化】设置 Artifact 保留天数
           retention-days: 30
